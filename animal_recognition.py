@@ -2,10 +2,23 @@ import io
 import os
 import argparse
 import shutil
-from PIL import Image
+import PIL.Image
+import PIL.ExifTags
 
 # Imports the Google Cloud client library
 from google.cloud import vision
+
+def is_night(image_path):
+    # constants 
+    maker_note_exif_tag = 37500
+    infrared_status_byte = 80
+
+    img = PIL.Image.open(image_path)
+    maker_note = img._getexif()[maker_note_exif_tag]
+    infrared_on = maker_note[infrared_status_byte] 
+    if infrared_on == 0: 
+        return False
+    return True
 
 def make_directory(directory):
     try:
@@ -24,11 +37,10 @@ def animal_found(objects, threshold):
 
 def construct_arg_parser():
 	ap = argparse.ArgumentParser()
-	ap.add_argument("-i", "--image-directory", required=True, help="image source directory")
-	#ap.add_argument("-a", "--animal-directory", required=True, help="animal image destination directory")
-	#ap.add_argument("-b", "--blank-directory", required=True, help="blank/no animal image destination directory")
-	ap.add_argument("-g", "--greyscale", action="store_true", help="Flag to process it as greyscale")
-	ap.add_argument("-t", "--threshold", help="Percentage threshold", type=int)
+	ap.add_argument("image-directory", help="image source directory")
+	ap.add_argument("threshold", help="Percentage threshold", type=int)
+	ap.add_argument("-g", "--greyscale", action="store_true", help="Convert all images to greyscale before processing")
+	ap.add_argument("-n", "--night-auto-animal", action="store_true", help="Automatically categorise night images as animal")
 	return ap
 
 def get_image_paths(directory):
@@ -46,7 +58,7 @@ def move_image(image_path, target_directory):
     shutil.move(image_path, full_target_path)
 
 def get_greyscale_image(image_path):
-    img = Image.open(image_path).convert('L')
+    img = PIL.Image.open(image_path).convert('L')
     temp_store = io.BytesIO()
     img.save(temp_store, format="JPEG")
     temp_store.seek(0)
@@ -58,11 +70,17 @@ def get_standard_image(image_path):
         content = image_file.read()
     return content
 
-def process_image(image_path, animal_directory, no_animal_directory, greyscale, threshold):
+def process_image(image_path, animal_directory, no_animal_directory, greyscale, threshold, night_auto_animal):
     print("Processing image {}".format(image_path))
     # Loads the image into memory
     # with io.open(image_path, 'rb') as image_file:
     #     content = image_file.read()
+
+    if night_auto_animal:
+        if is_night(image_path):
+            print("\tNight image - classified as animal")
+            move_image(image_path, animal_directory)
+            return
 
     if greyscale: 
         content = get_greyscale_image(image_path)
@@ -85,24 +103,25 @@ def process_image(image_path, animal_directory, no_animal_directory, greyscale, 
     else:
         print("\tNo animal found")
         move_image(image_path, no_animal_directory)
-
+    return
 
 ###### main script 
 ap = construct_arg_parser()
 args = vars(ap.parse_args())
+print(args)
 # Instantiates a client
 client = vision.ImageAnnotatorClient()
 
-image_paths = get_image_paths(args["image_directory"])
+image_paths = get_image_paths(args["image-directory"])
 # make destination directories
-blank_directory = (os.path.join(args["image_directory"],"blank"))
+blank_directory = (os.path.join(args["image-directory"],"blank"))
 make_directory(blank_directory)
-animal_directory = (os.path.join(args["image_directory"],"animal"))
+animal_directory = (os.path.join(args["image-directory"],"animal"))
 make_directory(animal_directory)
 
 # process images
 for image_path in image_paths:
-    process_image(image_path, animal_directory, blank_directory, args["greyscale"], args["threshold"])
+    process_image(image_path, animal_directory, blank_directory, args["greyscale"], args["threshold"], args["night_auto_animal"])
 
 
 # # The name of the image file to annotate
